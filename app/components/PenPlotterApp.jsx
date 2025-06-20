@@ -26,7 +26,7 @@ const defaultProfile = {
   email: "",
   address: "",
   date: "",
-  font: "Quicksand",
+  font: "Quicksand-Regular",
   cardSize: "4x6",
   type: "card",
   format: "chumba",
