@@ -52,7 +52,7 @@ const PenPlotterApp = () => {
   });
   const [savedProfiles, setSavedProfiles] = useState({});
   const [fontFile, setFontFile] = useState(null);
-  const [fontOptions, setFontOptions] = useState(['Quicksand']);
+  const [fontOptions, setFontOptions] = useState(['Quicksand-Regular']);
   const [uploadedFontPath, setUploadedFontPath] = useState(null);
   const [fontFaceUrl, setFontFaceUrl] = useState(null);
 
