@@ -26,11 +26,12 @@ const defaultProfile = {
   email: "",
   address: "",
   date: "",
-  font: "Quicksand-Regular",
+  font: "Quicksand",
   cardSize: "4x6",
   type: "card",
   format: "chumba",
   body: "",
+  code: "",
 };
 
 const PenPlotterApp = () => {
@@ -41,7 +42,6 @@ const PenPlotterApp = () => {
   const [template, setTemplate] = useState(
     defaultFormatTemplates[defaultProfile.format]
   );
-  const [codes, setCodes] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newFormat, setNewFormat] = useState({
     key: "",
@@ -150,16 +150,15 @@ const PenPlotterApp = () => {
     setTemplate(formatTemplates[newFormat]);
   };
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const lines = event.target.result.split(/\r?\n/).filter(Boolean);
-      setCodes(lines);
-    };
-    reader.readAsText(file);
+  const generateRandomCode = () => {
+    const randomCode = Math.floor(100000 + Math.random() * 900000).toString();
+    setProfile({ ...profile, code: randomCode });
   };
+
+  useEffect(() => {
+    // Generate initial random code on component mount
+    generateRandomCode();
+  }, []);
 
   const handleFontUpload = async () => {
     if (!fontFile) return;
@@ -193,7 +192,6 @@ const PenPlotterApp = () => {
   const isOptional = (field) => template.optionalFields.includes(field);
 
   const generatePreviewText = () => {
-    const sampleCode = codes.length > 0 ? codes[0] : "SAMPLE_CODE";
     return template.template
       .replace(/{name}/g, profile.name || "John Doe")
       .replace(/{username}/g, profile.username || "johndoe")
@@ -203,123 +201,133 @@ const PenPlotterApp = () => {
         /{date}/g,
         profile.date || new Date().toISOString().split("T")[0]
       )
-      .replace(/{code}/g, sampleCode)
+      .replace(/{code}/g, profile.code || "123456")
       .replace(/{body}/g, profile.body || "This is a sample message.");
   };
 
-const generateGcode = async (text, profile) => {
-  // Validate profile
-  if (!profile || typeof profile !== "object") {
-    throw new Error("Profile parameter is missing or invalid");
-  }
-  if (!profile.font && !profile.fontPath) {
-    throw new Error('Profile must include either "font" or "fontPath"');
-  }
+  const generateGcode = async (text, profile) => {
+    // Validate profile
+    if (!profile || typeof profile !== "object") {
+      throw new Error("Profile parameter is missing or invalid");
+    }
+    if (!profile.font && !profile.fontPath) {
+      throw new Error('Profile must include either "font" or "fontPath"');
+    }
 
-  let gcode =
-    ["G21", "G90", "F20000", "G1G90 Z0.5F20000", "G1G90 Z0.5F20000"].join(
-      "\n"
-    ) + "\n";
+    let gcode =
+      ["G21", "G90", "F20000", "G1G90 Z0.5F20000", "G1G90 Z0.5F20000"].join(
+        "\n"
+      ) + "\n";
 
-  const fontPath = profile.fontPath || `/fonts/${profile.font}.ttf`;
-  const marginX = -2.351; // Match reference starting X
-  const marginY = -3.679; // Match reference starting Y
-  const fontSize = 4; // Adjusted for reference scale
-  const lineHeight = fontSize + 0.3; // Tighter, reference-aligned spacing
+    const fontPath = profile.fontPath || `/fonts/${profile.font}.ttf`;
+    const marginX = -2.351; // Match reference starting X
+    const marginY = -3.679; // Match reference starting Y
+    const fontSize = 4; // Adjusted for reference scale
+    const lineHeight = fontSize + 0.3; // Tighter, reference-aligned spacing
 
-  try {
-    const font = await new Promise((resolve, reject) => {
-      opentype.load(fontPath, (err, font) => {
-        if (err) reject(err);
-        else resolve(font);
+    try {
+      const font = await new Promise((resolve, reject) => {
+        opentype.load(fontPath, (err, font) => {
+          if (err) reject(err);
+          else resolve(font);
+        });
       });
-    });
 
-    const scale = fontSize / font.unitsPerEm;
-    const lines = text.split("\n").filter((line) => line.trim().length > 0);
+      const scale = fontSize / font.unitsPerEm;
+      const lines = text.split("\n").filter((line) => line.trim().length > 0);
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
 
-      let x = marginX;
-      let y = marginY + i * lineHeight;
+        let x = marginX;
+        let y = marginY + i * lineHeight;
 
-      const lineGlyphs = font.stringToGlyphs(line);
-      for (let j = 0; j < lineGlyphs.length; j++) {
-        const glyph = lineGlyphs[j];
-        const path = glyph.getPath(x, y, fontSize);
-        let penDown = false;
-        let prevX = x;
-        let prevY = y;
+        const lineGlyphs = font.stringToGlyphs(line);
+        for (let j = 0; j < lineGlyphs.length; j++) {
+          const glyph = lineGlyphs[j];
+          const path = glyph.getPath(x, y, fontSize);
+          let penDown = false;
+          let prevX = x;
+          let prevY = y;
 
-        for (const cmd of path.commands) {
-          if (cmd.type === "M") {
-            if (penDown) {
-              gcode += `G1G90 Z0.5F20000\n`; // Lift pen
-              penDown = false;
-            }
-            if (cmd.x !== prevX || cmd.y !== prevY) {
-              gcode += `G0 X${cmd.x.toFixed(3)}Y${cmd.y.toFixed(3)}F20000\n`;
-              prevX = cmd.x;
-              prevY = cmd.y;
-            }
-          } else if (cmd.type === "L") {
-            if (!penDown) {
-              gcode += `G1G90 Z-5.0F20000\n`; // Lower pen
-              penDown = true;
-            }
-            if (cmd.x !== prevX || cmd.y !== prevY) {
-              gcode += `G1 X${cmd.x.toFixed(3)}Y${cmd.y.toFixed(3)}F20000\n`;
-              prevX = cmd.x;
-              prevY = cmd.y;
-            }
-          } else if (cmd.type === "Q" || cmd.type === "C") {
-            const steps = 2; // Minimized steps to reduce density
-            let startX = prevX;
-            let startY = prevY;
-            for (let t = 0; t <= 1; t += 1 / steps) {
-              const tx =
-                cmd.type === "Q"
-                  ? (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * cmd.x1 + t * t * cmd.x
-                  : Math.pow(1 - t, 3) * startX + 3 * Math.pow(1 - t, 2) * t * cmd.x1 + 3 * (1 - t) * t * t * cmd.x2 + Math.pow(t, 3) * cmd.x;
-              const ty =
-                cmd.type === "Q"
-                  ? (1 - t) * (1 - t) * startY + 2 * (1 - t) * t * cmd.y1 + t * t * cmd.y
-                  : Math.pow(1 - t, 3) * startY + 3 * Math.pow(1 - t, 2) * t * cmd.y1 + 3 * (1 - t) * t * t * cmd.y2 + Math.pow(t, 3) * cmd.y;
+          for (const cmd of path.commands) {
+            if (cmd.type === "M") {
+              if (penDown) {
+                gcode += `G1G90 Z0.5F20000\n`; // Lift pen
+                penDown = false;
+              }
+              if (cmd.x !== prevX || cmd.y !== prevY) {
+                gcode += `G0 X${cmd.x.toFixed(3)}Y${cmd.y.toFixed(3)}F20000\n`;
+                prevX = cmd.x;
+                prevY = cmd.y;
+              }
+            } else if (cmd.type === "L") {
               if (!penDown) {
-                gcode += `G1G90 Z-5.0F20000\n`;
+                gcode += `G1G90 Z-5.0F20000\n`; // Lower pen
                 penDown = true;
               }
-              if (tx !== prevX || ty !== prevY) {
-                gcode += `G1 X${tx.toFixed(3)}Y${ty.toFixed(3)}F20000\n`;
-                prevX = tx;
-                prevY = ty;
+              if (cmd.x !== prevX || cmd.y !== prevY) {
+                gcode += `G1 X${cmd.x.toFixed(3)}Y${cmd.y.toFixed(3)}F20000\n`;
+                prevX = cmd.x;
+                prevY = cmd.y;
+              }
+            } else if (cmd.type === "Q" || cmd.type === "C") {
+              const steps = 2; // Minimized steps to reduce density
+              let startX = prevX;
+              let startY = prevY;
+              for (let t = 0; t <= 1; t += 1 / steps) {
+                const tx =
+                  cmd.type === "Q"
+                    ? (1 - t) * (1 - t) * startX +
+                      2 * (1 - t) * t * cmd.x1 +
+                      t * t * cmd.x
+                    : Math.pow(1 - t, 3) * startX +
+                      3 * Math.pow(1 - t, 2) * t * cmd.x1 +
+                      3 * (1 - t) * t * t * cmd.x2 +
+                      Math.pow(t, 3) * cmd.x;
+                const ty =
+                  cmd.type === "Q"
+                    ? (1 - t) * (1 - t) * startY +
+                      2 * (1 - t) * t * cmd.y1 +
+                      t * t * cmd.y
+                    : Math.pow(1 - t, 3) * startY +
+                      3 * Math.pow(1 - t, 2) * t * cmd.y1 +
+                      3 * (1 - t) * t * t * cmd.y2 +
+                      Math.pow(t, 3) * cmd.y;
+                if (!penDown) {
+                  gcode += `G1G90 Z-5.0F20000\n`;
+                  penDown = true;
+                }
+                if (tx !== prevX || ty !== prevY) {
+                  gcode += `G1 X${tx.toFixed(3)}Y${ty.toFixed(3)}F20000\n`;
+                  prevX = tx;
+                  prevY = ty;
+                }
               }
             }
           }
-        }
 
-        if (penDown) {
-          gcode += `G1G90 Z0.5F20000\n`;
+          if (penDown) {
+            gcode += `G1G90 Z0.5F20000\n`;
+          }
+          x += glyph.advanceWidth * scale * 0.3; // Tighter glyph spacing
         }
-        x += glyph.advanceWidth * scale * 0.3; // Tighter glyph spacing
       }
-    }
 
-    gcode += ["G1G90 Z0.5F20000", "G90 G0 X0 Y0", "M30"].join("\n") + "\n";
-    return gcode;
-  } catch (error) {
-    console.error("Error generating G-code:", error);
-    throw new Error(`Failed to generate G-code: ${error.message}`);
-  }
-};
+      gcode += ["G1G90 Z0.5F20000", "G90 G0 X0 Y0", "M30"].join("\n") + "\n";
+      return gcode;
+    } catch (error) {
+      console.error("Error generating G-code:", error);
+      throw new Error(`Failed to generate G-code: ${error.message}`);
+    }
+  };
 
   const handleRun = async () => {
     try {
       if (typeof window === "undefined") return;
-      if (!codes.length) {
-        alert("Please upload a code file first.");
+      if (!profile.code) {
+        alert("Please generate a code first.");
         return;
       }
       const missingFields = template.requiredFields
@@ -337,25 +345,21 @@ const generateGcode = async (text, profile) => {
       const zip = new JSZip();
       const tmpl = template.template;
 
-      for (const code of codes) {
-        let content = tmpl
-          .replace(/{name}/g, profile.name || "")
-          .replace(/{username}/g, profile.username || "")
-          .replace(/{email}/g, profile.email || "")
-          .replace(/{address}/g, profile.address || "")
-          .replace(/{date}/g, profile.date || "")
-          .replace(/{code}/g, code)
-          .replace(/{body}/g, profile.body || "");
+      let content = tmpl
+        .replace(/{name}/g, profile.name || "")
+        .replace(/{username}/g, profile.username || "")
+        .replace(/{email}/g, profile.email || "")
+        .replace(/{address}/g, profile.address || "")
+        .replace(/{date}/g, profile.date || "")
+        .replace(/{code}/g, profile.code)
+        .replace(/{body}/g, profile.body || "");
 
-        const gcode = await generateGcode(content, profile);
-        const filename = `${profile.format}_${String(
-          codes.indexOf(code) + 1
-        ).padStart(3, "0")}.gcode`;
-        zip.file(filename, gcode);
-      }
+      const gcode = await generateGcode(content, profile);
+      const filename = `${profile.format}_001.gcode`;
+      zip.file(filename, gcode);
 
       const blob = await zip.generateAsync({ type: "blob" });
-      saveAs(blob, `${profile.format}_gcodes.zip`);
+      saveAs(blob, `${profile.format}_gcode.zip`);
     } catch (error) {
       console.error("Error generating G-code:", error);
       alert(`Failed to generate G-code: ${error.message}`);
@@ -363,8 +367,8 @@ const generateGcode = async (text, profile) => {
   };
 
   const handleClear = () => {
-    setProfile(defaultProfile);
-    setCodes([]);
+    setProfile({ ...defaultProfile, code: "" });
+    generateRandomCode();
     setUploadedFontPath(null);
     setFontFile(null);
     setFontFaceUrl(null);
@@ -397,7 +401,7 @@ const generateGcode = async (text, profile) => {
 
   const handleLoadProfile = (key) => {
     const loadedProfile = savedProfiles[key];
-    setProfile(loadedProfile);
+    setProfile({ ...loadedProfile, code: profile.code });
     setTemplate(formatTemplates[loadedProfile.format]);
     setUploadedFontPath(null);
     setFontFile(null);
@@ -483,13 +487,33 @@ const generateGcode = async (text, profile) => {
           Custom Pen Plotter Form
         </h2>
 
-        <div className="flex justify-between mb-6">
+        <div className="flex justify-between mb-2 items-center bg-gray-50 p-4 rounded-lg shadow">
           <button
             onClick={() => setIsModalOpen(true)}
             className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition"
           >
             Manage Formats
           </button>
+          <div>
+            <label className="block font-semibold text-gray-700">
+              Upload Font (TTF)
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="file"
+                accept=".ttf"
+                onChange={(e) => setFontFile(e.target.files[0])}
+                className="w-full p-2 border rounded-lg file:mr-2 file:py-2 file:px-2 file:rounded-lg file:border-0 file:bg-blue-600 file:text-white hover:file:bg-blue-700"
+              />
+              <button
+                onClick={handleFontUpload}
+                className="bg-green-600 text-white px-2 py-2 rounded-lg hover:bg-green-700 transition"
+                disabled={!fontFile}
+              >
+                Upload
+              </button>
+            </div>
+          </div>
           <select
             onChange={(e) => handleLoadProfile(e.target.value)}
             className="p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -655,8 +679,10 @@ const generateGcode = async (text, profile) => {
               />
             </div>
           )}
+        </div>
 
-          <div>
+        <div className="flex gap-4 mt-4">
+          <div className="w-2/4">
             <label className="block font-semibold text-gray-700">Body</label>
             <textarea
               name="body"
@@ -667,54 +693,41 @@ const generateGcode = async (text, profile) => {
               placeholder="Enter custom body text here..."
             />
           </div>
+
+          <div className="w-2/4">
+            <label className="block font-semibold text-gray-700">
+              Generated Code
+            </label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="text"
+                value={profile.code}
+                readOnly
+                className="w-full p-2 border rounded-lg bg-gray-100"
+              />
+              <button
+                onClick={generateRandomCode}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+              >
+                Change
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="mt-6">
+        <div className="mt-4">
           <label className="block font-semibold text-gray-700">Preview</label>
           <div
             className="w-full p-4 border rounded-lg bg-gray-50 whitespace-pre-wrap"
             style={{
               fontFamily: `"${profile.font}", sans-serif`,
-              fontSize: "16px",
+              fontSize: "18px",
               lineHeight: "1.5",
               minHeight: "100px",
             }}
           >
             {fontFaceUrl ? generatePreviewText() : "Loading font..."}
           </div>
-        </div>
-
-        <div className="mt-6">
-          <label className="block font-semibold text-gray-700">
-            Upload Font (TTF)
-          </label>
-          <div className="flex gap-4">
-            <input
-              type="file"
-              accept=".ttf"
-              onChange={(e) => setFontFile(e.target.files[0])}
-              className="w-full p-2 border rounded-lg file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-600 file:text-white hover:file:bg-blue-700"
-            />
-            <button
-              onClick={handleFontUpload}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition"
-              disabled={!fontFile}
-            >
-              Upload Font
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <label className="block font-semibold text-gray-700">
-            Upload Code File (.txt)
-          </label>
-          <input
-            type="file"
-            accept=".txt"
-            onChange={handleFileUpload}
-            className="w-full p-2 border rounded-lg file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-600 file:text-white hover:file:bg-blue-700"
-          />
         </div>
 
         <div className="flex gap-4 mt-6">
